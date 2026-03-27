@@ -1,1 +1,177 @@
-Test
+====================================================================
+  E-Commerce Polyglot Data Pipeline — File Descriptions
+====================================================================
+
+This project is a capstone exercise for building a polyglot data pipeline
+using four databases (PostgreSQL, MongoDB, Redis, Neo4j) behind a FastAPI
+web API. Students implement the data-access layer, migrations, and seeding.
+
+--------------------------------------------------------------------
+  Root Files
+--------------------------------------------------------------------
+
+docker-compose.yml
+  Defines and orchestrates the four database services (Postgres 16, MongoDB 7,
+  Redis 7, Neo4j 5) with health checks, persistent volumes, and port mappings.
+
+pyproject.toml
+  Python project metadata and dependency list (FastAPI, SQLAlchemy, pymongo,
+  redis, neo4j, etc.). Also configures CLI entry points for seed/migrate/setup,
+  pytest settings, and the Hatch build system.
+
+README.md
+  Main project documentation. Describes the architecture, project structure,
+  getting-started steps, and the three implementation phases (Phase 1: Postgres
+  + MongoDB, Phase 2: Redis, Phase 3: Neo4j).
+
+--------------------------------------------------------------------
+  scripts/
+--------------------------------------------------------------------
+
+scripts/__init__.py
+  Package marker for the scripts module.
+
+scripts/migrate.py
+  Database migration script. Resets all databases then runs student-implemented
+  migration logic to create Postgres tables (via SQLAlchemy), MongoDB indexes,
+  and Neo4j constraints. Contains a TODO placeholder for students.
+
+scripts/seed.py
+  Seed script that loads sample data from seed_data/ JSON files into all
+  databases. Students implement the seeding logic to populate Postgres,
+  MongoDB, Redis inventory counters, and the Neo4j co-purchase graph.
+
+scripts/setup.py
+  Convenience wrapper that runs reset + migrate + seed in one command.
+  Provided infrastructure — students should not modify this file.
+
+--------------------------------------------------------------------
+  seed_data/
+--------------------------------------------------------------------
+
+seed_data/products.json
+  Sample product catalog data (electronics, clothing, books, etc.) used
+  by the seed script to populate Postgres and MongoDB.
+
+seed_data/customers.json
+  Sample customer records used by the seed script to populate Postgres.
+
+seed_data/historical_orders.json
+  Historical order data used in Phase 3 to build the Neo4j co-purchase graph.
+
+--------------------------------------------------------------------
+  src/ecommerce_pipeline/
+--------------------------------------------------------------------
+
+src/ecommerce_pipeline/__init__.py
+  Package marker for the main application module.
+
+src/ecommerce_pipeline/db.py
+  Database connection management. Creates singleton connections to all four
+  databases based on environment variables. Exposes get_db_access() as a
+  FastAPI dependency that returns a configured DBAccess instance. Provided
+  infrastructure — students should not modify this file.
+
+src/ecommerce_pipeline/db_access.py
+  The core data-access layer (DBAccess class). This is the main file students
+  implement. Contains methods for creating orders (ACID transactions), reading
+  products from MongoDB, saving/querying order snapshots, caching with Redis,
+  tracking recently-viewed products, managing inventory counters, computing
+  revenue analytics, and generating Neo4j co-purchase recommendations. Each
+  method starts as a NotImplementedError placeholder.
+
+src/ecommerce_pipeline/postgres_models.py
+  SQLAlchemy ORM model definitions. Students define their Postgres table
+  schemas here (customers, orders, order_items, products) using the
+  SQLAlchemy 2.0 declarative API. Starts with only a Base class.
+
+src/ecommerce_pipeline/reset.py
+  Database reset utilities. reset_all() drops all tables, collections, keys,
+  and nodes for a clean slate. clear_data() truncates data but preserves
+  structure (used between tests). Provided infrastructure — not to be modified.
+
+--------------------------------------------------------------------
+  src/ecommerce_pipeline/models/
+--------------------------------------------------------------------
+
+src/ecommerce_pipeline/models/__init__.py
+  Package marker for the Pydantic models module.
+
+src/ecommerce_pipeline/models/requests.py
+  Pydantic request models. Defines OrderItemRequest (product_id + quantity)
+  and CreateOrderRequest (customer_id + list of items) with validation
+  (positive quantities, non-empty items list).
+
+src/ecommerce_pipeline/models/responses.py
+  Pydantic response models. Defines all API response shapes: ProductResponse,
+  OrderResponse, OrderSnapshotResponse, OrderCustomerEmbed, OrderItemResponse,
+  RecommendationResponse, CategoryRevenueResponse, RecentlyViewedResponse, etc.
+
+--------------------------------------------------------------------
+  src/ecommerce_pipeline/api/
+--------------------------------------------------------------------
+
+src/ecommerce_pipeline/api/__init__.py
+  Package marker for the API module.
+
+src/ecommerce_pipeline/api/app.py
+  FastAPI application entry point. Creates the app, registers all route
+  routers (products, orders, customers, analytics), and includes a startup
+  warning if migration hasn't been run. Also exposes a /health endpoint.
+
+--------------------------------------------------------------------
+  src/ecommerce_pipeline/api/routes/
+--------------------------------------------------------------------
+
+src/ecommerce_pipeline/api/routes/__init__.py
+  Package marker for the routes module.
+
+src/ecommerce_pipeline/api/routes/products.py
+  Product endpoints: GET /products (search by category/name), GET
+  /products/{id} (fetch single product), GET /products/{id}/recommendations
+  (co-purchase recommendations). Delegates to DBAccess methods.
+
+src/ecommerce_pipeline/api/routes/orders.py
+  Order endpoints: POST /orders (create order), GET /orders/{id} (fetch
+  order snapshot). Delegates to DBAccess methods. Returns 400 on ValueError
+  (insufficient stock) and 501 on NotImplementedError.
+
+src/ecommerce_pipeline/api/routes/customers.py
+  Customer endpoints: GET /customers/{id}/orders (order history), POST
+  /customers/{id}/viewed/{product_id} (record product view), GET
+  /customers/{id}/recently-viewed (recently viewed products). Delegates
+  to DBAccess methods.
+
+src/ecommerce_pipeline/api/routes/analytics.py
+  Analytics endpoint: GET /analytics/revenue-by-category (total revenue
+  per product category, sorted highest first). Delegates to DBAccess.
+
+--------------------------------------------------------------------
+  tests/
+--------------------------------------------------------------------
+
+tests/__init__.py
+  Package marker for the tests module.
+
+tests/conftest.py
+  Shared pytest fixtures and helpers. Sets up isolated test databases
+  (ecommerce_test for Postgres, separate MongoDB DB, Redis db=1). Provides
+  fixtures for each phase (db_phase1, db_phase2, db), auto-cleans data
+  between tests, and includes raw MongoDB insert helpers for test setup.
+
+tests/test_phase1.py
+  Phase 1 tests (PostgreSQL + MongoDB). Black-box tests through DBAccess:
+  get_product, search_products, save/get order snapshots, order history,
+  create_order (success, stock reduction, insufficient stock, atomic
+  rollback, snapshot creation), and revenue_by_category.
+
+tests/test_phase2.py
+  Phase 2 tests (Redis). Tests cache-aside logic (populate on read, serve
+  stale data, invalidation, TTL), recently-viewed list (bounded at 10,
+  returns ints), and inventory counters (seeded values, decrement on order,
+  no change on failed order).
+
+tests/test_phase3.py
+  Phase 3 tests (Neo4j). Tests co-purchase recommendations: correct shape,
+  descending score sort, self-exclusion, limit, empty results for unknown
+  products, and graph updates when new orders are created.
