@@ -1,0 +1,129 @@
+====================================================================
+  Implementation Guide — How to Begin
+====================================================================
+
+OVERVIEW
+--------
+This is a 3-phase capstone project where you implement a polyglot
+data-access layer (DBAccess) backed by 4 databases: PostgreSQL,
+MongoDB, Redis, and Neo4j. The API, routes, models, and tests are
+already provided — you fill in the implementation.
+
+
+BEFORE YOU START CODING
+-----------------------
+1. Start the databases:
+       docker compose up -d
+
+2. Set up Python:
+       cp .env.example .env
+       uv sync
+
+3. Read the response models in:
+       src/ecommerce_pipeline/models/responses.py
+   and request models in:
+       src/ecommerce_pipeline/models/requests.py
+   These define the exact shapes your methods must return.
+
+4. Read the test files (especially tests/test_phase1.py) to
+   understand the exact behavior expected.
+
+
+====================================================================
+  PHASE 1 — PostgreSQL + MongoDB (start here)
+====================================================================
+
+Work through these 4 files in order:
+
+Step 1: src/ecommerce_pipeline/postgres_models.py
+  - Define SQLAlchemy ORM models for Customer, Product, Order,
+    and OrderItem tables.
+
+Step 2: scripts/migrate.py
+  - Call Base.metadata.create_all(engine) and create any MongoDB
+    indexes.
+
+Step 3: scripts/seed.py
+  - Load products.json and customers.json into Postgres and MongoDB.
+
+Step 4: src/ecommerce_pipeline/db_access.py
+  - Implement 7 methods:
+      * create_order
+      * get_product
+      * search_products
+      * save_order_snapshot
+      * get_order
+      * get_order_history
+      * revenue_by_category
+
+Validate with:
+    uv run pytest tests/test_phase1.py
+
+
+====================================================================
+  PHASE 2 — Redis
+====================================================================
+
+Step 1: Add cache-aside logic to get_product
+  - Check Redis first, fall back to MongoDB, populate cache with
+    a 300-second TTL.
+
+Step 2: Implement these methods in db_access.py:
+  - invalidate_product_cache
+  - record_product_view
+  - get_recently_viewed
+
+Step 3: Update create_order to decrement Redis inventory counters.
+
+Step 4: Update scripts/seed.py to initialize Redis inventory
+        counters from Postgres product stock.
+
+Validate with:
+    uv run pytest tests/test_phase2.py
+
+
+====================================================================
+  PHASE 3 — Neo4j
+====================================================================
+
+Step 1: Implement get_recommendations in db_access.py
+  - Cypher graph traversal for co-purchase recommendations.
+
+Step 2: Update create_order to merge co-purchase edges in Neo4j
+        for every pair of products in the order, incrementing the
+        edge weight.
+
+Step 3: Update scripts/migrate.py to create Neo4j constraints.
+
+Step 4: Update scripts/seed.py to build the co-purchase graph
+        from seed_data/historical_orders.json.
+
+Validate with:
+    uv run pytest tests/test_phase3.py
+
+
+====================================================================
+  RUNNING TESTS
+====================================================================
+
+Run all tests:
+    uv run pytest tests/
+
+Run only a specific phase:
+    uv run pytest tests/test_phase1.py
+    uv run pytest tests/test_phase2.py
+    uv run pytest tests/test_phase3.py
+
+Tests use separate test databases and are fully isolated — each
+test cleans up after itself.
+
+
+====================================================================
+  TIPS
+====================================================================
+- Run "docker compose logs -f postgres" to see Postgres logs if
+  queries fail.
+- Use the /docs endpoint in your browser as a live test client.
+- For Phase 2+, confirm Redis is running with "redis-cli ping".
+- For Phase 3, check Neo4j Browser at http://localhost:7474 to
+  inspect the graph visually.
