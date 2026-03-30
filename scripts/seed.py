@@ -41,7 +41,84 @@ def seed(engine, mongo_db, redis_client=None, neo4j_driver=None):
         customers = json.load(open(SEED_DIR / "customers.json"))
         historical_orders = json.load(open(SEED_DIR / "historical_orders.json"))
     """
-    pass  # TODO: Phase 1 — load products and customers into Postgres + MongoDB
+    import json
+    from datetime import datetime
+    from sqlalchemy.orm import Session
+    from ecommerce_pipeline.postgres_models import Customer, Product, Order, OrderItem
+
+    products_data = json.load(open(SEED_DIR / "products.json"))
+    customers_data = json.load(open(SEED_DIR / "customers.json"))
+    orders_data = json.load(open(SEED_DIR / "historical_orders.json"))
+
+    # Build price lookup for order totals and item unit prices
+    price_by_id = {p["id"]: p["price"] for p in products_data}
+
+    # --- Phase 1: PostgreSQL ---
+    with Session(engine) as session:
+        session.add_all([
+            Customer(id=c["id"], name=c["name"], email=c["email"])
+            for c in customers_data
+        ])
+        session.flush()
+        print(f"  [postgres] {len(customers_data)} customers inserted")
+
+        session.add_all([
+            Product(
+                id=p["id"],
+                name=p["name"],
+                price=p["price"],
+                stock_quantity=p["stock_quantity"],
+                category=p["category"],
+                description=p.get("description", ""),
+            )
+            for p in products_data
+        ])
+        session.flush()
+        print(f"  [postgres] {len(products_data)} products inserted")
+
+        for o in orders_data:
+            total = sum(price_by_id.get(pid, 0) for pid in o["product_ids"])
+            session.add(Order(
+                id=o["order_id"],
+                customer_id=o["customer_id"],
+                status="completed",
+                total_amount=total,
+                created_at=datetime.fromisoformat(o["created_at"]),
+            ))
+            session.flush()
+            session.add_all([
+                OrderItem(
+                    order_id=o["order_id"],
+                    product_id=pid,
+                    quantity=1,
+                    unit_price=price_by_id.get(pid, 0),
+                )
+                for pid in o["product_ids"]
+            ])
+
+        session.commit()
+        print(f"  [postgres] {len(orders_data)} orders + items inserted")
+
+    # --- Phase 1: MongoDB ---
+    for p in products_data:
+        mongo_db["products"].replace_one({"id": p["id"]}, p, upsert=True)
+    print(f"  [mongo] {len(products_data)} products inserted")
+
+    for o in orders_data:
+        items = [
+            {"product_id": pid, "quantity": 1, "unit_price": price_by_id.get(pid, 0)}
+            for pid in o["product_ids"]
+        ]
+        snapshot = {
+            "order_id": o["order_id"],
+            "customer_id": o["customer_id"],
+            "status": "completed",
+            "total": sum(price_by_id.get(pid, 0) for pid in o["product_ids"]),
+            "items": items,
+            "created_at": o["created_at"],
+        }
+        mongo_db["orders"].replace_one({"order_id": o["order_id"]}, snapshot, upsert=True)
+    print(f"  [mongo] {len(orders_data)} orders inserted")
 
 
 # ---------------------------------------------------------------------------
