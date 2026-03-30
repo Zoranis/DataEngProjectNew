@@ -66,7 +66,110 @@ class DBAccess:
         is saved for read access, and downstream counters and graph edges are
         updated (best-effort, does not roll back the order on failure).
         """
-        raise NotImplementedError("Phase 1: implement create_order")
+        from sqlalchemy import select
+        from ecommerce_pipeline.postgres_models import Customer, Order, OrderItem, Product
+        from ecommerce_pipeline.models.responses import (
+            OrderCustomerEmbed,
+            OrderItemResponse,
+            OrderResponse,
+        )
+
+        with self._pg_session_factory() as session:
+            # Lock product rows to prevent concurrent overselling
+            product_ids = [item.product_id for item in items]
+            products = {
+                p.id: p
+                for p in session.execute(
+                    select(Product)
+                    .where(Product.id.in_(product_ids))
+                    .with_for_update()
+                ).scalars()
+            }
+
+            # Validate stock before any writes
+            for item in items:
+                product = products.get(item.product_id)
+                if product is None:
+                    raise ValueError(f"Product {item.product_id} not found")
+                if product.stock_quantity < item.quantity:
+                    raise ValueError(
+                        f"Insufficient stock for product {item.product_id}: "
+                        f"requested {item.quantity}, available {product.stock_quantity}"
+                    )
+
+            # Fetch customer for the snapshot
+            customer = session.get(Customer, customer_id)
+            if customer is None:
+                raise ValueError(f"Customer {customer_id} not found")
+
+            total_amount = sum(
+                products[item.product_id].price * item.quantity for item in items
+            )
+
+            order = Order(
+                customer_id=customer_id,
+                status="pending",
+                total_amount=total_amount,
+            )
+            session.add(order)
+            session.flush()  # populate order.id
+
+            order_item_rows = []
+            for item in items:
+                product = products[item.product_id]
+                order_item_rows.append(
+                    OrderItem(
+                        order_id=order.id,
+                        product_id=item.product_id,
+                        quantity=item.quantity,
+                        unit_price=product.price,
+                    )
+                )
+                product.stock_quantity -= item.quantity
+
+            session.add_all(order_item_rows)
+            session.commit()
+
+            order_id = order.id
+            created_at = order.created_at.isoformat() if hasattr(order.created_at, "isoformat") else str(order.created_at)
+            status = order.status
+
+            item_responses = [
+                OrderItemResponse(
+                    product_id=item.product_id,
+                    product_name=products[item.product_id].name,
+                    quantity=item.quantity,
+                    unit_price=float(products[item.product_id].price),
+                )
+                for item in items
+            ]
+            customer_embed = OrderCustomerEmbed(
+                id=customer.id,
+                name=customer.name,
+                email=customer.email,
+            )
+
+        # Best-effort snapshot (does not roll back the order on failure)
+        try:
+            self.save_order_snapshot(
+                order_id=order_id,
+                customer=customer_embed,
+                items=item_responses,
+                total_amount=float(total_amount),
+                status=status,
+                created_at=created_at,
+            )
+        except Exception:
+            logger.exception("Failed to save order snapshot for order %s", order_id)
+
+        return OrderResponse(
+            order_id=order_id,
+            customer_id=customer_id,
+            status=status,
+            total_amount=float(total_amount),
+            created_at=created_at,
+            items=item_responses,
+        )
 
     def get_product(self, product_id: int) -> ProductResponse | None:
         """Fetch a product by its integer ID.
@@ -74,7 +177,12 @@ class DBAccess:
         See ProductResponse in models/responses.py for the return shape.
         Returns None if not found.
         """
-        raise NotImplementedError("Phase 1: implement get_product")
+        from ecommerce_pipeline.models.responses import ProductResponse
+
+        doc = self._mongo_db["products"].find_one({"id": product_id}, {"_id": 0})
+        if doc is None:
+            return None
+        return ProductResponse(**doc)
 
     def search_products(
         self,
@@ -87,7 +195,17 @@ class DBAccess:
         q: case-insensitive substring match on the product name
         Both filters are ANDed together. Returns all products if both are None.
         """
-        raise NotImplementedError("Phase 1: implement search_products")
+        import re
+        from ecommerce_pipeline.models.responses import ProductResponse
+
+        query: dict = {}
+        if category is not None:
+            query["category"] = category
+        if q is not None:
+            query["name"] = {"$regex": re.escape(q), "$options": "i"}
+
+        docs = self._mongo_db["products"].find(query, {"_id": 0})
+        return [ProductResponse(**doc) for doc in docs]
 
     def save_order_snapshot(
         self,
@@ -112,7 +230,16 @@ class DBAccess:
         Called internally by create_order after the transactional write
         commits. Not called directly by routes.
         """
-        raise NotImplementedError("Phase 1: implement save_order_snapshot")
+        doc = {
+            "order_id": order_id,
+            "customer": customer.model_dump(),
+            "items": [item.model_dump() for item in items],
+            "total_amount": total_amount,
+            "status": status,
+            "created_at": created_at,
+        }
+        self._mongo_db["orders"].replace_one({"order_id": order_id}, doc, upsert=True)
+        return str(order_id)
 
     def get_order(self, order_id: int) -> OrderSnapshotResponse | None:
         """Fetch a single order snapshot by order_id.
@@ -120,21 +247,51 @@ class DBAccess:
         See OrderSnapshotResponse in models/responses.py for the return shape.
         Returns None if not found.
         """
-        raise NotImplementedError("Phase 1: implement get_order")
+        from ecommerce_pipeline.models.responses import OrderSnapshotResponse
+
+        doc = self._mongo_db["orders"].find_one({"order_id": order_id}, {"_id": 0})
+        if doc is None:
+            return None
+        return OrderSnapshotResponse(**doc)
 
     def get_order_history(self, customer_id: int) -> list[OrderSnapshotResponse]:
         """Fetch all order snapshots for a customer, sorted by created_at descending.
 
         Returns an empty list if the customer has no orders.
         """
-        raise NotImplementedError("Phase 1: implement get_order_history")
+        from ecommerce_pipeline.models.responses import OrderSnapshotResponse
+
+        docs = self._mongo_db["orders"].find(
+            {"customer_id": customer_id},
+            {"_id": 0},
+            sort=[("created_at", -1)],
+        )
+        return [OrderSnapshotResponse(**doc) for doc in docs]
 
     def revenue_by_category(self) -> list[CategoryRevenueResponse]:
         """Compute total revenue per product category, sorted by total_revenue descending.
 
         See CategoryRevenueResponse in models/responses.py for the return shape.
         """
-        raise NotImplementedError("Phase 1: implement revenue_by_category")
+        from sqlalchemy import select, func
+        from ecommerce_pipeline.postgres_models import OrderItem, Product
+        from ecommerce_pipeline.models.responses import CategoryRevenueResponse
+
+        with self._pg_session_factory() as session:
+            rows = session.execute(
+                select(
+                    Product.category,
+                    func.sum(OrderItem.quantity * OrderItem.unit_price).label("total_revenue"),
+                )
+                .join(Product, OrderItem.product_id == Product.id)
+                .group_by(Product.category)
+                .order_by(func.sum(OrderItem.quantity * OrderItem.unit_price).desc())
+            ).all()
+
+        return [
+            CategoryRevenueResponse(category=row.category, total_revenue=float(row.total_revenue))
+            for row in rows
+        ]
 
     # ── Phase 2 ───────────────────────────────────────────────────────────────
     #
