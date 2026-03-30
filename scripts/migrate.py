@@ -31,7 +31,21 @@ def migrate(engine, mongo_db, redis_client=None, neo4j_driver=None):
         redis_client: redis.Redis instance or None (Phase 2+)
         neo4j_driver: neo4j.Driver instance or None (Phase 3)
     """
-    pass  # TODO: Phase 1 — create Postgres tables and MongoDB indexes
+    # Phase 1: PostgreSQL — create all tables from ORM models
+    from ecommerce_pipeline.postgres_models import Base
+    Base.metadata.create_all(engine)
+    print("  [postgres] tables created")
+
+    # Phase 1: MongoDB — indexes for fast lookups
+    # products: looked up by integer id, filtered by category
+    mongo_db["products"].create_index("id", unique=True)
+    mongo_db["products"].create_index("category")
+    print("  [mongo] products indexes created")
+
+    # orders: looked up by order_id, listed by customer_id
+    mongo_db["orders"].create_index("order_id", unique=True)
+    mongo_db["orders"].create_index("customer_id")
+    print("  [mongo] orders indexes created")
 
 
 # ---------------------------------------------------------------------------
