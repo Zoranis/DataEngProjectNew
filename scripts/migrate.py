@@ -38,14 +38,14 @@ def migrate(engine, mongo_db, redis_client=None, neo4j_driver=None):
 
     # Phase 1: MongoDB — indexes for fast lookups
     # products: looked up by integer id, filtered by category
-    mongo_db["products"].create_index("id", unique=True)
-    mongo_db["products"].create_index("category")
-    print("  [mongo] products indexes created")
+    mongo_db["product_catalog"].create_index("id", unique=True)
+    mongo_db["product_catalog"].create_index("category")
+    print("  [mongo] product_catalog indexes created")
 
-    # orders: looked up by order_id, listed by customer_id
-    mongo_db["orders"].create_index("order_id", unique=True)
-    mongo_db["orders"].create_index("customer_id")
-    print("  [mongo] orders indexes created")
+    # order_snapshots: looked up by order_id, listed by customer_id
+    mongo_db["order_snapshots"].create_index("order_id", unique=True)
+    mongo_db["order_snapshots"].create_index("customer.id")
+    print("  [mongo] order_snapshots indexes created")
 
 
 # ---------------------------------------------------------------------------

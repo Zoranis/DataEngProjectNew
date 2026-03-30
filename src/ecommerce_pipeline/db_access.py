@@ -108,7 +108,7 @@ class DBAccess:
 
             order = Order(
                 customer_id=customer_id,
-                status="pending",
+                status="completed",
                 total_amount=total_amount,
             )
             session.add(order)
@@ -179,7 +179,7 @@ class DBAccess:
         """
         from ecommerce_pipeline.models.responses import ProductResponse
 
-        doc = self._mongo_db["products"].find_one({"id": product_id}, {"_id": 0})
+        doc = self._mongo_db["product_catalog"].find_one({"id": product_id}, {"_id": 0})
         if doc is None:
             return None
         return ProductResponse(**doc)
@@ -204,7 +204,7 @@ class DBAccess:
         if q is not None:
             query["name"] = {"$regex": re.escape(q), "$options": "i"}
 
-        docs = self._mongo_db["products"].find(query, {"_id": 0})
+        docs = self._mongo_db["product_catalog"].find(query, {"_id": 0})
         return [ProductResponse(**doc) for doc in docs]
 
     def save_order_snapshot(
@@ -238,7 +238,7 @@ class DBAccess:
             "status": status,
             "created_at": created_at,
         }
-        self._mongo_db["orders"].replace_one({"order_id": order_id}, doc, upsert=True)
+        self._mongo_db["order_snapshots"].replace_one({"order_id": order_id}, doc, upsert=True)
         return str(order_id)
 
     def get_order(self, order_id: int) -> OrderSnapshotResponse | None:
@@ -249,7 +249,7 @@ class DBAccess:
         """
         from ecommerce_pipeline.models.responses import OrderSnapshotResponse
 
-        doc = self._mongo_db["orders"].find_one({"order_id": order_id}, {"_id": 0})
+        doc = self._mongo_db["order_snapshots"].find_one({"order_id": order_id}, {"_id": 0})
         if doc is None:
             return None
         return OrderSnapshotResponse(**doc)
@@ -261,8 +261,8 @@ class DBAccess:
         """
         from ecommerce_pipeline.models.responses import OrderSnapshotResponse
 
-        docs = self._mongo_db["orders"].find(
-            {"customer_id": customer_id},
+        docs = self._mongo_db["order_snapshots"].find(
+            {"customer.id": customer_id},
             {"_id": 0},
             sort=[("created_at", -1)],
         )
