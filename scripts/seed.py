@@ -86,6 +86,36 @@ def seed(engine, mongo_db, redis_client=None, neo4j_driver=None):
             redis_client.set(f"inventory:{p['id']}", p["stock_quantity"])
         print(f"  [redis] {len(products_data)} inventory counters initialized")
 
+    # --- Phase 3: Neo4j co-purchase graph ---
+    if neo4j_driver is not None:
+        from itertools import combinations
+
+        historical_orders = json.load(open(SEED_DIR / "historical_orders.json"))
+        name_by_id = {p["id"]: p["name"] for p in products_data}
+
+        with neo4j_driver.session() as session:
+            # Create Product nodes for all products referenced in orders
+            for p in products_data:
+                session.run(
+                    "MERGE (p:Product {id: $id}) SET p.name = $name",
+                    id=p["id"], name=p["name"],
+                )
+
+            # Build co-purchase edges from historical orders
+            for order in historical_orders:
+                pids = order["product_ids"]
+                for a, b in combinations(pids, 2):
+                    session.run(
+                        "MERGE (a:Product {id: $a}) "
+                        "MERGE (b:Product {id: $b}) "
+                        "MERGE (a)-[r:BOUGHT_TOGETHER]-(b) "
+                        "ON CREATE SET r.weight = 1 "
+                        "ON MATCH SET r.weight = r.weight + 1",
+                        a=a, b=b,
+                    )
+
+        print(f"  [neo4j] co-purchase graph built from {len(historical_orders)} orders")
+
 
 # ---------------------------------------------------------------------------
 # CLI entry point

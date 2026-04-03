@@ -47,6 +47,15 @@ def migrate(engine, mongo_db, redis_client=None, neo4j_driver=None):
     mongo_db["order_snapshots"].create_index("customer.id")
     print("  [mongo] order_snapshots indexes created")
 
+    # Phase 3: Neo4j — uniqueness constraint on Product nodes
+    if neo4j_driver is not None:
+        with neo4j_driver.session() as session:
+            session.run(
+                "CREATE CONSTRAINT product_id_unique IF NOT EXISTS "
+                "FOR (p:Product) REQUIRE p.id IS UNIQUE"
+            )
+        print("  [neo4j] constraints created")
+
 
 # ---------------------------------------------------------------------------
 # CLI entry point
