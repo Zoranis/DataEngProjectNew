@@ -80,6 +80,12 @@ def seed(engine, mongo_db, redis_client=None, neo4j_driver=None):
         mongo_db["product_catalog"].replace_one({"id": p["id"]}, p, upsert=True)
     print(f"  [mongo] {len(products_data)} products inserted")
 
+    # --- Phase 2: Redis inventory counters ---
+    if redis_client is not None:
+        for p in products_data:
+            redis_client.set(f"inventory:{p['id']}", p["stock_quantity"])
+        print(f"  [redis] {len(products_data)} inventory counters initialized")
+
 
 # ---------------------------------------------------------------------------
 # CLI entry point
